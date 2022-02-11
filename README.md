@@ -46,7 +46,9 @@
 
 #### Как реализовать копирование из консоли VB?
 
-Для работы копирования общего буфера обмена вроде нужно поставить внутри виртуальной машины набор инструментов virtualbox. [Ответ на форуме](https://superuser.com/questions/42134/how-do-i-enable-the-shared-clipboard-in-virtualbox).
+Для работы копирования общего буфера обмена вроде нужно поставить внутри виртуальной машины набор инструментов virtualbox. [Ответ на форуме - нужно установить vb guest additions](https://superuser.com/questions/42134/how-do-i-enable-the-shared-clipboard-in-virtualbox).
 
 Но проще сразу настроить подключение по ssh с удобным ssh-клиентом и не мучиться.
+
+Еще один вариант - использовать команду `scp src_user@src_host:/path/to/file /local_dst/path/to/file` (Linux & MacOS) или [WinSCP](https://winscp.net/eng/index.php).
 
