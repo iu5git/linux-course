@@ -1,0 +1,17 @@
+---
+- name: restart node_exporter
+  systemd:
+    name: node_exporter
+    state: restarted
+    daemon_reload: yes
+    enabled: yes
+  register: node_exporter_restarted
+  when: not node_exporter_started.changed
+
+- name: reload node_exporter
+  systemd:
+    name: node_exporter
+    state: reloaded
+  when: 
+    - not node_exporter_started.changed
+    - not (node_exporter_restarted.changed | default(false))

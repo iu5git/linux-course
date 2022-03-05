@@ -1,0 +1,14 @@
+---
+- hosts: all
+  roles:
+    - name: atop
+      tags:
+        - atop
+        - monitoring
+
+- hosts: stage
+  roles:
+    - name: ntpd
+      tags: ntpd
+    - name: node_exporter
+      tags: node_exporter

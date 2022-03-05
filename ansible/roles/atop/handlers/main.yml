@@ -1,0 +1,14 @@
+---
+# For educational purposes only
+# Using "listen" can call multiple handlers at once
+# Preferred: use daemon_reload in the "Restart" handler instead
+- name: reload systemd
+  command: systemctl daemon-reload
+  listen: atop_restart
+
+- name: restart atop
+  service:
+    name: atop
+    state: restarted
+    #daemon_reload: yes
+  listen: atop_restart

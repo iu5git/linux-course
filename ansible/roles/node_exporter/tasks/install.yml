@@ -1,0 +1,47 @@
+---
+- name: Download prometheus node_exporter to local folder
+  become: false
+  get_url:
+    url: "{{ node_exporter_download_link }}"
+    dest: "/tmp/{{ node_exporter_pack_name }}.{{ node_exporter_pack_ext }}"
+  register: _download_archive
+  until: _download_archive is succeeded
+  retries: 3
+  delay: 2
+  run_once: true
+  delegate_to: localhost
+  check_mode: false
+
+- name: Unpack node_exporter binaries
+  become: false
+  unarchive:
+    src: "/tmp/{{ node_exporter_pack_name }}.{{ node_exporter_pack_ext }}"
+    dest: "/tmp/"
+    creates: "/tmp/{{ node_exporter_pack_name }}/node_exporter"
+  run_once: true
+  delegate_to: localhost
+  check_mode: false
+
+- name: Creating node_exporter user group
+  group: name="{{ groupId }}"
+  when: groupId != "root"
+
+- name: Creating node_exporter user
+  user:
+    name: "{{ userId }}"
+    group: "{{ groupId }}"
+    system: yes
+    shell: "/sbin/nologin"
+    comment: "{{ userId }} nologin User"
+    createhome: "no"
+    state: present
+  when: userId != "root"
+
+- name: Copy node_exporter binaries
+  copy:
+    src: "/tmp/{{ node_exporter_pack_name }}/node_exporter"
+    dest: "{{ node_exporter_bin_dir }}/"
+    mode: 0755
+    owner: "{{ userId }}"
+    group: "{{ groupId }}"
+  notify: restart node_exporter

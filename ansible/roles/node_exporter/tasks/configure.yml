@@ -1,0 +1,14 @@
+---
+- name: Copy systemd init file
+  template:
+    src: init.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+  notify: restart node_exporter
+
+- name: Start node_exporter service
+  systemd:
+    name: node_exporter
+    state: started
+    daemon_reload: yes
+    enabled: yes
+  register: node_exporter_started

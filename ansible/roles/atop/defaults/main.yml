@@ -1,0 +1,3 @@
+---
+atop_log_interval: 600
+atop_log_generations: 28

@@ -1,0 +1,12 @@
+---
+serviceName: node_exporter
+userId: node_exporter
+groupId: node_exporter
+
+node_exporter_version: 1.0.1
+node_exporter_pack_name: node_exporter-{{ node_exporter_version }}.linux-{{ proc_version }}
+node_exporter_pack_ext: tar.gz
+node_exporter_download_link: https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/{{ node_exporter_pack_name }}.{{ node_exporter_pack_ext }}
+
+node_exporter_bin_dir: /usr/local/bin
+exec_command: "{{ node_exporter_bin_dir }}/node_exporter --collector.systemd --collector.filesystem.ignored-mount-points=^/(sys|proc|dev|run)($|/)"

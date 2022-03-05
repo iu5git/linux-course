@@ -1,0 +1,30 @@
+---
+- name: Install chronyd
+  package:
+    name: chrony
+    state: latest
+
+- name: Delete old/default config
+  file:
+    path: /etc/chronyd.conf
+    state: absent
+  notify: restart chronyd
+
+- name: Create config for chronyd
+  template:
+    src: chronyd.conf.j2
+    dest: /etc/chrony/chrony.conf
+    owner: root
+    group: root
+    mode: 0644
+    backup: yes
+  notify: restart chronyd
+
+- meta: flush_handlers
+
+- name: Start and enable chronyd
+  systemd:
+    name: chronyd
+    state: started
+    enabled: yes
+    daemon_reload: yes

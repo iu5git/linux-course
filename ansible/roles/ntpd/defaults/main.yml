@@ -1,0 +1,3 @@
+---
+ntpd_servers:
+  - ru.pool.ntp.org

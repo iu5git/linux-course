@@ -1,0 +1,14 @@
+all:
+  children:
+    # Группа web
+    web:
+      children:
+        # Группа stage
+        stage:
+          vars:
+            env: stage
+          hosts:
+            ansible_host: 127.0.0.1
+            ansible_port: 2222
+        # Потенциальная группа prod
+        # prod: ...

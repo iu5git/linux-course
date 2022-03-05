@@ -1,0 +1,25 @@
+---
+- name: Install packages
+  package:
+    name: atop
+    state: present
+
+- lineinfile:
+    path: /usr/share/atop/atop.daily
+    regexp: '^LOGINTERVAL=[0-9]*(.*)$'
+    line: 'LOGINTERVAL={{ atop_log_interval }}'
+  notify: atop_restart
+
+- lineinfile:
+    path: /usr/share/atop/atop.daily
+    regexp: '^LOGGENERATIONS=[0-9]*(.*)$'
+    line: 'LOGGENERATIONS={{ atop_log_generations }}'
+  notify: atop_restart
+
+- meta: flush_handlers
+
+- name: Start and enable atop
+  systemd:
+    name: atop
+    state: started
+    enabled: yes

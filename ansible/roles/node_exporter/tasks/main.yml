@@ -1,0 +1,8 @@
+---
+- include: install.yml
+- include: configure.yml
+
+- name: Flush handlers
+  meta: flush_handlers
+
+- include: check.yml
