@@ -12,3 +12,5 @@
       tags: ntpd
     - name: node_exporter
       tags: node_exporter
+    - name: nginx
+      tags: nginx

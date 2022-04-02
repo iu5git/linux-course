@@ -1,0 +1,7 @@
+userId: nginx
+groupId: nginx
+
+default_cert: /etc/nginx/certs/fullchain.pem
+default_cert_key: /etc/nginx/certs/privkey.pem
+
+external_blacklist: []

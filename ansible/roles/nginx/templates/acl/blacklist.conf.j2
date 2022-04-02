@@ -1,0 +1,3 @@
+{% for cidr in external_blacklist %}
+deny {{ cidr }};
+{% endfor %}

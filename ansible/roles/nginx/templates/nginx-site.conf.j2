@@ -1,0 +1,101 @@
+{% if item.port is defined %}
+upstream {{ item.name }} {
+{% if item.local | default(false) | bool %}
+	server 127.0.0.1:{{ item.port }};
+{% else %}
+{% for host in groups[item.group] %}
+	server {{ lookup('dig', host + '.i') }}:{{ item.port }};
+{% endfor %}
+{% endif %}
+}
+{% endif %}
+
+{% if item.server_name | default(false) %}
+{% if item.redirect | default(true) %}
+server {
+	listen {{ item.addr | default("0.0.0.0") }}:{{ item.http_port | default(80) }}{% if item.default | default(false) | bool %} default_server{% endif %};
+	server_name {{ item.server_name }};
+
+	include /etc/nginx/acl/blacklist.conf;
+{% for whitelist_name in item.whitelist|default([]) %}
+	include /etc/nginx/acl/{{ whitelist_name }}.conf;
+{% endfor %}
+	include /etc/nginx/acl/main.conf;
+
+{% for limit in nginx_rate_limits | default([]) %}
+	limit_req zone={{ limit.name }}{% if limit.burst is defined %} burst={{ limit.burst }}{% endif %}{% if limit.nodelay | default(false) | bool %} nodelay{% endif %};
+{% endfor %}
+
+	location / {
+		return 301 https://$host$request_uri;
+	}
+}
+
+{% endif %}
+server {
+{% if not item.redirect | default(true) %}
+	listen {{ item.addr | default("0.0.0.0") }}:{{ item.http_port | default(80) }}{% if item.default | default(false) | bool %} default_server{% endif %};
+{% endif %}
+{% if item.ssl | default(true) | bool %}
+	listen {{ item.addr | default("0.0.0.0") }}:{{ item.https_port | default(443) }} ssl{% if item.default | default(false) | bool %} default_server{% endif %};
+
+	ssl_certificate     {{ item.ssl_certificate | default(default_cert) }};
+	ssl_certificate_key {{ item.ssl_certificate_key | default(default_cert_key) }};
+{% endif %}
+
+	include /etc/nginx/acl/blacklist.conf;
+{% for whitelist_name in item.whitelist|default([]) %}
+	include /etc/nginx/acl/{{ whitelist_name }}.conf;
+{% endfor %}
+	include /etc/nginx/acl/main.conf;
+
+{% for limit in item.conn_limits | default( nginx_conn_limits | default([]) ) %}
+	limit_conn {{ limit.name }} {{ limit.max_conn }};
+{% endfor %}
+{% for limit in item.rate_limits | default( nginx_rate_limits | default([]) )%}
+	limit_req zone={{ limit.name }}{% if limit.burst is defined %} burst={{ limit.burst }}{% endif %}{% if limit.nodelay | default(false) | bool %} nodelay{% endif %};
+{% endfor %}
+
+{% if item.basic_auth | default(false) | bool %}
+	auth_basic           "Restricted Area";
+	auth_basic_user_file {{ item.basic_auth_file | default('/etc/nginx/.htpasswd') }};
+
+{% endif %}
+	access_log /var/log/nginx/{{ item.name }}.access.log main;
+	error_log /var/log/nginx/{{ item.name }}.error.log;
+
+	server_name {{ item.server_name }};
+
+	client_max_body_size {{ item.client_max_body_size | default('100M') }};
+
+	location ~ /\. {
+		deny all;
+	}
+
+{% if item.port is defined %}
+	location {{ item.path | default('/') }} {
+		proxy_pass         http://{{ item.name }}{% if item.add_path | default(false) %}{{ item.add_path }}{% endif %};
+		proxy_http_version 1.1;
+		proxy_set_header   Host              $http_host;
+		proxy_set_header   Upgrade           $http_upgrade;
+		proxy_set_header   Connection        $connection_upgrade;
+		proxy_set_header   X-Real-IP         $remote_addr;
+		proxy_set_header   X-Forwarded-Proto $scheme;
+		proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+	}
+{% endif %}
+
+{% if item.static_root | default(false) %}
+	location {{ item.static_path | default('static') }} {
+		add_header Cache-Control "public, max-age=31536000";
+		{% if item.static_hard | default(false) | bool %}root {% else %}alias{% endif %}     {{ item.static_root }};
+		index     {{ item.static_index | default('index.html') }};
+{% if item.ignore_not_found | default(false) | bool %}
+		try_files $uri $uri/ {{ item.not_found | default('/index.html') }} =404;
+{% else %}
+		try_files $uri $uri/ =404;
+{% endif %}
+	}
+{% endif %}
+}
+{% endif %}

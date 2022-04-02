@@ -1,0 +1,145 @@
+---
+- name: Install nginx
+  package:
+    name: "{{ item }}"
+    state: latest
+  with_items:
+    - nginx
+    - python3-passlib # htpasswd module
+
+- name: Creating nginx user group
+  group: name="{{groupId}}"
+
+- name: Creating nginx user
+  user:
+    name: "{{userId}}"
+    group: "{{groupId}}"
+    system: yes
+    shell: "/sbin/nologin"
+    comment: "{{userId}} nologin User"
+    createhome: "no"
+    state: present
+
+- name: Configure nginx
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    backup: yes
+  notify:
+    - nginx_reload
+
+- name: Create paths for configs
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0775
+  with_items:
+    - /etc/nginx/acl
+    - /etc/nginx/conf.d
+    - /etc/nginx/sites-available
+    - /etc/nginx/sites-enabled
+    - /etc/nginx/certs
+    - /var/www/mysite/ # Just for fun
+
+- name: Configure mysite page # Just for fun
+  template:
+    src: mysite.html.j2
+    dest: /var/www/mysite/index.html
+    mode: 0644
+
+- name: Configure htpasswd files
+  htpasswd:
+    path: "{{ item.0.name }}"
+    name: "{{ item.1.name }}"
+    password: "{{ item.1.pass }}"
+    owner: root
+    group: "{{ groupId }}"
+    mode: 0640
+  with_subelements:
+    - "{{ htpasswds }}"
+    - users
+  notify: nginx_reload
+
+- name: Configure nginx default site
+  template:
+    src: default.conf.j2
+    dest: /etc/nginx/sites-available/default
+    mode: 0644
+  notify: nginx_reload
+
+- name: Configure nginx whitelist/blacklist
+  template:
+    src: "{{ item }}"
+    dest: "/etc/nginx/acl/{{ item | basename | regex_replace('\\.j2$', '') }}"
+    mode: 0644
+  with_fileglob:
+    - ../templates/acl/*.j2
+  notify: nginx_restart
+
+- name: Configure nginx main sites
+  template:
+    src: nginx-site.conf.j2
+    dest: /etc/nginx/sites-available/{{ item.name }}
+  with_items: "{{ nginx_sites }}"
+  notify: nginx_reload
+
+- name: Create a symbolic link in apps-enabled
+  file:
+    src: /etc/nginx/sites-available/{{ item.name }}
+    dest: /etc/nginx/sites-enabled/{{ item.name }}
+    owner: root
+    group: root
+    mode: 0644
+    state: link
+  with_items: "{{ nginx_sites }}"
+  when: inventory_hostname in groups[item.hosts | default(web_group)]
+  notify: nginx_reload
+
+- name: Find all enabled sites
+  shell: ls -1 /etc/nginx/sites-enabled/
+  register: all_contents
+  changed_when: False
+  check_mode: no
+
+- name: Aggregate valid sites
+  set_fact:
+    valid: "{{ valid | default(['default']) + [item.name] }}"
+  with_items: "{{ nginx_sites }}"
+  check_mode: no
+  when: inventory_hostname in groups[item.hosts | default(web_group)] 
+
+- name: Disable wrong sites
+  file:
+    dest: /etc/nginx/sites-enabled/{{ item }}
+    state: absent
+  with_items: "{{ all_contents['stdout_lines'] | difference(valid) }}"
+  when: not ansible_check_mode
+  notify: nginx_reload
+
+- name: Disable nginx default site
+  file:
+    dest: /etc/nginx/sites-enabled/default
+    state: absent
+  when: not nginx_enable_default | default(false) | bool
+  notify: nginx_reload
+
+- name: Enable nginx default site
+  file:
+    src: /etc/nginx/sites-available/default
+    dest: /etc/nginx/sites-enabled/default
+    owner: root
+    group: root
+    mode: 0644
+    state: link
+  when: nginx_enable_default | default(false) | bool
+  notify: nginx_reload
+
+- meta: flush_handlers
+
+- name: Start & enable nginx
+  systemd:
+    name: nginx
+    state: started
+    enabled: yes
