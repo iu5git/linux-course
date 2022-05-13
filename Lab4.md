@@ -78,7 +78,7 @@ echo \
   
 # Ставим
 sudo apt update
-sudo apt install install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+sudo apt install docker-ce docker-ce-cli containerd.io docker-compose-plugin
 ```
 
 > Нужно обязательно обновить apt cache (`apt update`) после добавления нового репозитория.
