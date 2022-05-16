@@ -541,6 +541,596 @@ upload image:
 ![Gitlab](./img/77-gitlab.png)
 
 
+## Этапы жизненного цикла ПО (ЖЦ):
+Вообще типичные пайплайны на работе:
+1. test
+   - тестирование кода
+   - протестированный код передается далее как [артефакт](https://docs.gitlab.com/ee/ci/pipelines/job_artifacts.html)
+2. build rpm
+   - сборка rpm-пакетов. В debian это deb. В Ubuntu - apt
+   - собирается docker-образ, передается дальше через registry
+3. rsync rpm to repo-server
+   - ручная фаза копирования изменений на *development* или *production*-сервер
+   - Протокол scp. Scp это cp over ssh
+
+[Этапы ЖЦ](https://docs.gitlab.com/ee/ci/yaml/#stages), выделяемые гитлаб.
+
+
+# Extra задание с двумя звездочками
+
+Материал разработан при содействии [студентов](https://gitlab.com/Denactive/education_devops_gitlabci).
+
+## Содержание
++ Тестирование кода
++ Замер покрытия
++ Отображение тестов в pipeline
++ Артефакты
++ Дополнительно к дополнительному
+
+## Тестирование кода
+До сих пор пайплайн ничего не проверял. Напишем новый скрипт и код к нему.
+
+Создадим папочки:
+
+```
+root
+|
++ mylib/ -|
+|        + src/ lib.py
+|        + test/test.py
+|
++ __init__.py
++ .gitignore
+```
+
+`mylib/src/lib.py`
+```python
+def merge(*arrays):
+  '''
+  Эта функция объединяет элементы массивы вида list<tuple<str, int>>
+  в словарь dict<str, int>. Элементы будут расположены в том порядке, в они котором идут
+  в исходных массивах, при этом на каждом шаге из первых элементов списков
+  выбирается минимальный
+  '''
+  arrays = list(filter(lambda array: len(array), arrays))
+  positions = [0]  * len(arrays)
+  res = {}
+  while sum(positions) != -len(arrays):
+    column = [arrays[i][pos] for i, pos in enumerate(positions)]
+    minimum = column[0][0]
+    minimum_idxs = []
+    minimum_num = 0
+    for i, (el, num) in enumerate(column):
+      if el < minimum:
+        minimum = el
+        minimum_num = num
+        minimum_idxs = [i]
+      elif el == minimum:
+        minimum_num = minimum_num + num
+        minimum_idxs.append(i)
+      
+    res[minimum] = (0 if not minimum in res else res[minimum]) + minimum_num
+    for i in minimum_idxs:
+      positions[i] = positions[i] + 1
+    # удаляю с конца, чтобы не было проблем из-за смещения индексов
+    for i in reversed(minimum_idxs):
+      if positions[i] == len(arrays[i]):
+        positions.pop(i)
+        arrays.pop(i)
+  return res
+
+```
+
+`mylib/test/test.py`
+```python
+import unittest
+
+# Чтобы файл с тестами видел новый модуль
+import sys
+import os
+# Получение пути текущей директории
+current = os.path.dirname(os.path.realpath(__file__))
+root = os.path.join(current, f'..{os.path.sep}..')
+sys.path.append(root)
+# Теперь можно импортировать наш модуль
+from mylib.src.lib import merge
+
+cases = [
+  {
+    'test': [[('hello', 1), ('hello1', 1)]],
+    'answer': {'hello': 1, 'hello1': 1},
+  },
+  {
+    'test': [[('hello', 1), ('hello', 1)]],
+    'answer': {'hello': 2},
+  },
+]
+
+class TestWordCount(unittest.TestCase):
+  # Действия до запуска тестов
+  def setUp(self):
+    pass
+
+  # Действия по окончании тестирования
+  def tearDown(self):
+    pass
+
+  # Каждый тест должен начинаться с test_
+  def test_merge(self):
+    print('running test_merge...')
+    for i, case in enumerate(cases):
+      print('case', i + 1)
+      self.assertDictEqual(merge(*case['test']), case['answer'])
+
+if __name__ == "__main__":
+  unittest.main()
+
+```
+
+`__init__.py`
+```python
+from .src.lib import merge
+```
+
+Добавим `.gitignore`, чтобы не спамить мусор
+```
+__pycache__/
+```
+
+Проверяем, что тест работает.
+```bash
+python ./mylib/test/test.py
+```
+```
+Running tests...
+----------------------------------------------------------------------
+running test_merge...
+case 1
+case 2
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.002s
+
+OK
+```
+
+Перепишем `.gitlab-ci.yml`
+```yaml
+stages:
+  - test
+
+
+run tests:
+  image: python:3.9.12-alpine3.15
+  stage: test
+  before_script:
+  script:
+    - echo "Testing"
+    - python -m unittest discover ./mylib/test/
+
+```
+
+В этом пайплайне используется другой легковесный образ python:3.9.12-alpine3.15 с уже предустановленным питоном 3 и последним pip. Он весит 57 Мб против 900 у полного образа с питоном.
+
+Команда `python -m unittest discover .\mylib\test\` используется для выполнения всех тестов в модуле.
+
+Функция нашей библиотеки выполняет часть соединения массивов (step 4) в сортировке слиянием (merge sort):
+
+![merge sort](./img/Lab4_Merge-Sort-Algorithm.png)
+
+## Замер покрытия
+
+Добавим замер покрытия кода тестами.
+Используем python утилиту [coverage](https://coverage.readthedocs.io/en/6.3.3/).
+
+```bash
+pip install coverage
+```
+
+После установки можно прогонять код вот так:
+```bash
+python -m coverage run file.py
+```
+для python-модулей:
+```bash
+python -m coverage run -m path.to.module
+```
+Более того, вместе с библиотекой ставится команда `coverage`, аналогичная `python -m coverage`
+
+Замер покрытия генерирует в корне проекта файл `.coverage`. Добавим его в гитигнор.
+
+После выполнения замера, можно вывести отчет на экран:
+
+```bash
+coverage report file.py
+```
+
+```
+PS C:\ДЗ\DevOps\расширение для лаб-4> coverage report
+Name                 Stmts   Miss  Cover
+----------------------------------------
+mylib\__init__.py        1      0   100%
+mylib\src\lib.py        25      3    88%
+mylib\test\test.py      29      0   100%
+----------------------------------------
+TOTAL                   55      3    95%
+
+```
+Однако он может содержать множество ненужных файлов, которые мы не собирались использовать. Чаще всего это различные `__init__.py` или чужие библиотеки. Настроить правила вывода отчета, игнорирование файлов и отдельных строк, путь, куда нужно положить отчет и многое другое можно в конфиге .coveragerc. Создадим его:
+
+`.coveragerc`
+```toml
+[run]
+relative_files = True
+branch = True
+
+[report]
+omit =
+    ./wordcounter/test/progress_bar.py
+    ./wordcounter/test/cases_test_decorator.py
+    ./wordcounter/test/test_cases/*
+    ./**/__init__.py
+
+exclude_lines =
+    if __name__ == "__main__":
+    unittest.main()
+    pragma: no cover
+
+show_missing = True
+skip_empty = True
+fail_under=90
+
+```
+
+Все его поля - это соответствующие опции команды coverage (см --help), только дефисы заменены нижними подчеркиваниями. Опция fail_under очень полезна для пайплайнов. Пайплайн не пройдет, если покрытие не будет достигать 90%. Запускаем `coverage run mylib/test/test.py`, `coverage report`
+
+```
+PS C:\ДЗ\DevOps\расширение для лаб-4> coverage report
+Name                 Stmts   Miss Branch BrPart  Cover   Missing
+----------------------------------------------------------------
+mylib\src\lib.py        25      3     18      2    88%   18-20, 21->16
+mylib\test\test.py      26      0      2      0   100%
+----------------------------------------------------------------
+TOTAL                   51      3     20      2    93%
+```
+Появилась дополнительная информация.
+
+Отчеты так же можно выводить в .json, .xml и .html форматы.
+
+Отправим все это на гитлаб. Перепишем `.gitlab-ci.yml`
+```yaml
+stages:
+  - test
+
+
+run tests:
+  image: python:3.9.12-alpine3.15
+  stage: test
+  before_script:
+    - python -m pip install coverage
+  script:
+    - echo "Testing & Coverage"
+    - python -m coverage run ./mylib/test/test.py
+    - python -m coverage report
+
+```
+На гитлаб увидим следующее:
+
+![pipeline-coverage](./img/Lab4-pipeline-cov.png)
+
+
+
+## Отображение тестов в pipeline
+В гитлаб есть поддержка тестов. Во время прохождения пайплайна, видно сколько тестов было пройдено, и какой текст выводился во время выполнения каждого из них. [Подробно с примерами для разных языков](https://docs.gitlab.com/ee/ci/unit_test_reports.html). Для этого нужно оформить отчет в виде .xml в формате [Jenkins JUnit](https://plugins.jenkins.io/junit/), и положить его в **корень!** как артефакт.
+
+[Аналогично для покрытия](https://docs.gitlab.com/runner/development/reviewing-gitlab-runner.html#reviewing-tests-coverage-reports), но пока покрытие показывается только в UI merge-request.
+
+Используемый нами фреймворк unittest не поддерживает junit формат (сейчас можете сохранить где-нибудь отчет `coverage xml`), поэтому для него есть расширение.
+```bash
+pip install xmlrunner
+```
+Существуют аналогичные расширения для [других языков](https://stackoverflow.com/questions/11241781 python-unittests-in-jenkins).
+
+изменим `mylib/test/test.py`:
+
+в начале:
+```python
+import unittest
+import xmlrunner
+
+```
+
+Допишем еще бесполезных тестов:
+```python
+  def test_useless_1(self):
+    print('running test_useless_1...')
+    self.assertFalse(10 < 4)
+
+  def test_useless_2(self):
+    print('running test_useless_2...')
+    self.assertFalse(10 < 4)
+
+```
+
+Заменим main внизу:
+```python
+if __name__ == "__main__":
+  with open(XML_RESULT_FILE, mode='w', encoding='utf-8') as output:
+    # да, эта штука пишет в открытый файл
+    unittest.main(testRunner=xmlrunner.XMLTestRunner(output=output))
+
+```
+
+Про [with](https://pycoder.ru/python-with-statement/) и [этот модуль](https://github.com/xmlrunner/unittest-xml-reporting).
+
+Добавим установку этого пакета и генерацию артефактов.
+```yaml
+stages:
+  - test
+
+
+run tests:
+  image: python:3.9.12-alpine3.15
+  stage: test
+  before_script:
+    - python -m pip install xmlrunner
+    - python -m pip install coverage
+  script:
+    - echo "Testing & Coverage"
+    - python -m coverage run ./mylib/test/test.py
+    - python -m coverage report
+    - python -m coverage xml
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+```
+
+Если тестировали все это локально перед пушем, что правильно, не забудьте дописать в `.gitignore`:
+```
+__pycache__/
+.coverage
+**/report.xml
+**/coverage.xml
+
+```
+
+Что же изменилось? Открываем подробную информацию по пайплайн, вкладка **тесты**:
+
+![pipeline-junit](./img/Lab4-pipeline-junit.png)
+
+Самостоятельно попробуйте сломать какой-нибудь тест и посмотреть на результат.
+Попробуйте повысить коэффициент покрытия, необходимый для прохождения, либо добавить код в библиотеку, который не будет выполняться: `if False:`.
+
+## Артефакты
+[Артефакт](https://docs.gitlab.com/ee/ci/pipelines/job_artifacts.html) - это файл, генерируемый джобой во время выполнения пайплайна. Его можно передавать другим джобам или сохранять в репозитории.
+
+Передадим артефакт с результатами тестов от одной джобы к джобе, которая отправляет отчеты в какое-нибудь другое место.
+
+```yaml
+stages:
+  - test
+  - report
+
+
+run tests:
+  image: python:3.9.12-alpine3.15
+  stage: test
+  before_script:
+    - python -m pip install xmlrunner
+    - python -m pip install coverage
+  script:
+    - echo "Testing & Coverage"
+    - python -m coverage run ./mylib/test/test.py > report.txt
+    - echo -e "\n---------------\n" >> report.txt
+    - python -m coverage report >> report.txt
+  artifacts:
+    paths:
+      - report.txt
+    untracked: true
+
+send tests:
+  stage: report
+  script:
+    - echo "Sending a report"
+    - cat report.txt
+
+```
+
+![pipeline-artifact-pass1](./img/Lab4-pipeline-artifact-pass1.png)
+
+Файл доступен внутри джобы с отчетами, иначе она бы упала:
+
+![pipeline-artifact-pass2](./img/Lab4-pipeline-artifact-pass2.png)
+
+**У артефактов не мало особенностей**
+
+Не найденные артефакты **не ломают джобу**, пайплайн не падает:
+
+![job-not-fail-when-no-artifacts](./img/Lab4-build-job-not-fail-when-no-artifacts.png)
+
+Путь к артефактам может быть указан только **относительно рабочей директории пайплайна**. К сожалению, этого [не написано в доке](https://gitlab.com/gitlab-org/gitlab-foss/-/issues/15530). Путь к рабочей директории можно получить с помощью [предустановленной переменной $CI_PROJECT_DIR](https://docs.gitlab.com/ee/ci/variables/predefined_variables.html):
+
+```pwd при старте = echo $CI_PROJECT_DIR при условии, что не задана builds_dir в конфиге раннера```
+
+[Более подробно про передачу артефактов между джобами](https://stackoverflow.com/questions/38140996/how-can-i-pass-artifacts-to-another-stage).
+
+Обратите внимание, **джобы выполняются последовательно**: артефакт, генерируемый одной джобой доступен только следующей. Если нужно, чтобы артефакт использовался спустя несколько джоб, то необходимо указать [dependencies](https://docs.gitlab.com/ee/ci/yaml/#dependencies), чтобы нарушить линейный порядок.
+
+
+## Дополнительно
+### Когда джоба падает?
+Джоба падает, если хотя бы одна строчка скрипта вернула ReturnCode (коротко rc) ($? В баше) не ноль. rc можно подруливать самому, написав условия и обертку над командой. В posix - rc=0 считается однозначным критерием, что программы выполнилась корректно. К сожалению, не все соблюдают posix.
+
+### Как передать пароли?
+[Передача паролей, токенов и т.п. в GitLab-CI](https://parsiya.net/blog/2021-10-11-modify-gitlab-repositories-from-the-ci-pipeline/#future-work)
+
+### Переменные
+[Переменные: глобальные и локальные для джобов](https://docs.gitlab.com/ee/ci/variables/). Ниже есть пример.
+
+### Передача готовых сборок между джобами
+Установить пакеты в одной джобе и и передать их в другую не выйдет. Лучше воспользоваться registry. Докер удобнее тем, что ему не важно, по каким директориям apt-get или pip разбросал файлы. Настройка всего окружения с нуля - крайне сложное занятие ([пример того, как это делается в python:alpine](https://github.com/docker-library/python/blob/f871d0435e7f35a693fa1b60aa159e6a1a4c6a2e/3.9/alpine3.15/Dockerfile)). Докер позволяет всю эту свору команд превратить в одну строчку - image: ...
+Передача артефактами удобна, когда нужно пробросить конфиги или отдельные собранные самописные библиотеки. Сделать это можно как-то так:
+```yaml
+variables:
+  PYTHON_PIP_FOLDER: /usr/local/lib/python3.9/site-packages
+
+build python:
+  image: python:3.9.12-alpine3.15
+  stage: build
+  script:
+    - echo "Python building"
+    - python -m pip install xmlrunner
+    - python -m pip install coverage
+    - mkdir libs/
+    - mv $PYTHON_PIP_FOLDER/xmlrunner libs/xmlrunner
+    - mv $PYTHON_PIP_FOLDER/coverage libs/coverage
+  artifacts:
+    paths:
+      - libs/
+    untracked: true
+
+run tests:
+  image: python:3.9.12-alpine3.15
+  stage: test
+  dependencies: 
+    - build python
+  before_script:
+    - mv libs/* $PYTHON_PIP_FOLDER/
+  script:
+    - echo "Testing & Coverage"
+    - python -m coverage run ./wordcounter/test/test.py
+    - python -m coverage report
+    - python -m coverage xml
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+```
+Можно было бы сохранить библиотеки в свою директорию, передав ее питону через переменную `$PYTHONPATH`: 
+```yaml
+# в одной джобе получаем библиотеку:
+script:
+    - echo "Python building"
+    - python -m pip install xmlrunner
+    - python -m pip install coverage
+    - mkdir libs/
+    - mv $PYTHON_PIP_FOLDER/xmlrunner libs/xmlrunner
+    - mv $PYTHON_PIP_FOLDER/coverage libs/coverage
+
+# в другой используем
+script:
+    - echo $CI_PROJECT_DIR
+    - export PYTHONPATH="$CI_PROJECT_DIR/libs:$PYTHONPATH"
+    - echo $PYTHONPATH
+
+```
+но coverage будет проходить по этой директории, а философия CI не предполагает изменения исходного кода, в т.ч. конфига `.coveragerc`.
+
+Можно было бы передавать собранный образ докера, минуя registry.
+```yaml
+# Билдиим образ с опцией --output
+artifacts:
+    paths:
+      - /var/lib/docker/my_super_app_image
+
+# Либо по хардкору прямо:
+artifacts:
+    paths:
+      - /var/lib/docker/
+
+```
+
+### Настройка раннера, передача конфига
+
+Мы пробрасывали volume с конфигом в начале:
+
+```bash
+docker run -d --name gitlab-runner \
+--restart always \
+-v "/gitlab-runner/config:/etc/gitlab-runner" \
+-v /var/run/docker.sock:/var/run/docker.sock \
+gitlab/gitlab-runner:latest
+```
+Если этот путь существует, то содержимое `gitlab-runner/config` попадет внутрь докера. Туда можно положить файл с названием `config.toml`, согласно [этому](https://docs.gitlab.com/runner/register/#runners-configuration-template-file), [и этому](https://docs.gitlab.com/runner/configuration/advanced-configuration.html) разделам документации:
+
+```yaml
+[[runners]]
+  executor = "docker"
+
+  [runners.docker]
+    pull_policy = ["if-not-present"]
+```
+
+Тут мы кешируем любой образ, указанный в `.gitlab-ci.yml`. Это не ускорит сборку, но ускорит реакцию раннера на новые коммиты. Тесты начнут запускаться мгновенно, т.к. время на скачивание образа больше не требуется. Можно указать образы, которые будут развернуты в раннере постоянно. 
+
+
+На Windows аналогично, только путь другой:
+docker run -d --name gitlab-runner --restart always -v :/etc/gitlab-runner" -v /var/run/docker.sock:/var/run/docker.sock gitlab/gitlab-runner:latest
+```bash
+docker run -d --name gitlab-runner \
+--restart always \
+-v "C:\Users\...\gitlab-runner\config:/etc/gitlab-runner" \
+-v /var/run/docker.sock:/var/run/docker.sock \
+gitlab/gitlab-runner:latest
+```
+
+Обязательно изменяем права доступа к этой директории.
+
+Linux
+```bash
+chmod 444 /gitlab-runner/config
+```
+
+Windows. Можно также забрать права просмотр списка файлов. Будьте готовы, что IDE будет считать папку пустой, а скопировать ее будет нельзя до восстановления прав. **Пользователя СИСТЕМА не трогаем**.
+
+![win-runner-security](./img/Lab4-win-security.png)
+
+
+### Настройка GitLab-CI без тысячи пушей
+Докер удобен тем, что проверить работу пайплайна можно в локально.
+```yaml
+FROM python:3.9.12-alpine3.15
+
+WORKDIR /app
+
+RUN python -m pip install xmlrunner
+
+RUN python -m pip install coverage
+
+CMD ["python", "--version"]
+
+```
+
+```bash
+# Запускаем одноразовый контейнер для изучения. Но в этом образе нет bash!
+docker run --rm -it --name ci-test python:3.9.12-alpine3.15 sh
+# изучаем структуру родительского образа изнутри
+docker exec -it <имя контейнера> bash
+# смотрим, куда установился пакет
+docker diff <имя контейнера>
+
+```
+
+применительно к этой работе
+- Куда ставится pip?
+    ```bash
+    pip -V
+    ```
+- Пакеты python, установленные через pip?
+    на 1 уровень назад: "pip -V)"..
+
+![where-are-pip-libs-inside-docker](./img/Lab4-inside-docker-whereis-pip-libs.png)
 
 
 
