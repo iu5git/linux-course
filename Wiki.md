@@ -981,15 +981,206 @@ proc                                      /proc proc   defaults  0      0
 
 ### Интерфейсы, адреса, маршруты
 
-> TODO: ifconfig, ip, route
+Сразу разберемся с понятиями:
+
+- src - source - источник, откуда мы отправляем данные
+- dst - destination - точка назначения, где мы принимаем данные
+- route - маршрут - указание куда направить данные с определенным dst
+
+Сетевое взаимодействие Linux-системы происходит через *[сетевые интерфейсы](http://xgu.ru/wiki/%D0%A1%D0%B5%D1%82%D0%B5%D0%B2%D0%BE%D0%B9_%D0%B8%D0%BD%D1%82%D0%B5%D1%80%D1%84%D0%B5%D0%B9%D1%81)*. Любые данные, которые компьютер отправляет в сеть или получает из сети проходят через сетевой интерфейс. Интерфейс определён реализацией модели TCP/IP для того чтобы  скрыть различия в сетевом обеспечении и свести сетевое взаимодействие к  обмену данными с абстрактной сущностью.
+
+Для каждого устройства, поддерживаемого ядром, существует сетевой интерфейс. Существует соглашение о наименовании интерфейсов, в соответствии с которым имя интерфейса состоит из префикса, характеризующего его тип, и числа, соответствующего номеру интерфейса данного типа в системе. Так, например, `ppp0` соответствует первому интерфейсу PPP, а `eth1` соответствует интерфейсу второго сетевого адаптера Ethernet. Обратите внимание на то, что нумерация интерфейсов начинается с 0. Начиная с середины 2011 года принята [новая схема](https://www.freedesktop.org/wiki/Software/systemd/PredictableNetworkInterfaceNames/) именования интерфейсов.
+
+Для работы с сетью есть 2 варианта. Старые утилиты из пакета net-tools (ifconfig, netstat, ...) и новые (ip, ss, ...).
+
+> Старые утиилиты можно поставить так: `apt install net-tools` или `yum install net-tools`, и т.д.
+
+#### Интерфейсы
+
+Смотрим список сетевых интерфейсов:
+
+```bash
+# [Legacy] net-tools
+ifconfig -a
+
+# New utilities
+ip a
+# сокращение от:
+ip ad
+ip addr
+ip address
+ip address list
+# можно сокращать до минимально различимых вариантов (т.е. отличающихся от других)
+```
+
+Смотрим конкретный сетевой интерфейс с именем `eth0`:
+
+```bash
+# [Legacy] net-tools
+ifconfig eth0
+
+# New utilities
+ip a s eth0
+# сокращение от:
+ip address show eth0
+```
+
+В Windows аналогичная команда назвается `ipconfig`.
+
+Переименовать интерфейс в runtime (до перезагрузки) можно так:
+
+```bash
+# Выключаем интерфейс
+ip link set ethX down
+
+# Даем новое временное имя
+ip link set ethX name ethYYY
+
+# Включаем интерфейс
+ip link set ethYYY up
+```
+
+#### Адреса
+
+Формат MAC-адреса: AA:BB:CC:DD:EE:FF, где 0x00 <= AA, BB, CC, DD, EE, FF <= 0xff.
+
+Как правило за каждым сетевым интерфейсом закреплен один MAC-адрес. Коммутатор записывает его и таким образом понимает куда отправлять данные дальше по таблице соответствия IP-адресов и MAC-адресов.
+
+Формат IPv4-адреса: A.B.C.D/MASK. где 0 <= A, B, C, D <= 255, 0 <= MASK <= 32.
+
+Иногда MASK задают октетами, например `/24` == `255.255.255.0`.
+
+Для тех, кто забыл как работают IP-адреса - [читайте тут](https://skillbox.ru/media/code/chto-takoe-ipadres-i-maska-podseti-i-zachem-oni-nuzhny/).
+
+На интерфейсе могут быть назначены один или несколько IP-адресов. Выведем список IPv4 адресов:
+
+```bash
+# [Legacy] net-tools
+ifconfig | grep 'inet ' | tr -s ' ' | cut -f3 -d ' '
+
+# New utilities
+ip a | grep 'inet ' | tr -s ' ' | cut -f3 -d ' '
+```
+
+`127.0.0.1` - `local loopback`, `lo` - адрес, который ссылается сам на себя, при отправке данных на интерфейс `lo` они вернутся оттуда же. Таким образом мы можем обратиться от сервера к этому же серверу. На самом деле работает аналогично для всех адресов в подсети `127.0.0.1/8`, что видно из вывода `ip a s lo`.
+
+А вот на этом интерфейсе мы видим целых 3 адреса, `192.168.8.50` основной, маска `/24`, отсюда получаем широковещательный адрес `192.168.8.255` (brd) автоматически.
+
+```
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
+    link/ether dc:a6:32:c2:88:99 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.8.50/24 brd 192.168.8.255 scope global noprefixroute eth0
+       valid_lft forever preferred_lft forever
+    inet 192.168.8.14/24 scope global secondary eth0:4
+       valid_lft forever preferred_lft forever
+    inet 192.168.8.12/24 scope global secondary eth0:2
+       valid_lft forever preferred_lft forever
+    inet6 fe80::d7c7:c650:a9b2:c8d0/64 scope link 
+       valid_lft forever preferred_lft forever
+```
+
+Два других адреса были назначены с псевдоинтерфейсов `eht0:4` и `eth0:2`.
+
+Еще мы видим IPv6 адрес: `fe80::d7c7:c650:a9b2:c8d0/64`.
+
+Для debian-based систем все это конфигурируется в `/etc/network/interfaces`.
+Для RH-based в каталоге `/etc/sysconfig/network-scripts/.`
+
+Временно можно добавить/удалить адрес командами:
+
+```bash
+# [Legacy] net-tools
+ifconfig IFACE ADDR netmask MASK_LONG broadcast BROADCAST_ADDR
+
+# Net utilities
+ip addr add ADDR/MASK dev IFACE
+ip addr del ADDR/MASK dev IFACE
+```
+
+Больше команд для [ip тут](https://www.tecmint.com/ip-command-examples/), для [ifconfig тут](https://www.tecmint.com/ifconfig-command-examples/).
+
+#### Маршруты
+
+Смотрим список маршрутов:
+
+```bash
+# [Legacy] net-tools
+route
+
+# New utilities
+ip r
+# сокращнеие от:
+ip route
+ip route list
+```
+
+На примере новой утилиты:
+
+```
+default via 192.168.8.1 dev eth0 src 192.168.8.50 metric 202 
+169.254.0.0/16 dev vethc3cb9ed scope link src 169.254.121.142 metric 218 
+172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1 linkdown 
+172.101.0.0/16 dev br_pdns_admin proto kernel scope link src 172.101.0.1 
+192.168.8.0/24 dev eth0 proto dhcp scope link src 192.168.8.50 metric 202 
+192.168.10.0/24 via 192.168.8.21 dev eth0 
+```
+
+`default == 0.0.0.0/0` - т.е. любой адрес может попасть под такой фильтр
+
+`172.17.0.0/16` - фильтр для dst-точки маршрута, в примере - сеть `172.17.0.0/16`
+
+`via IP_ADDR` - next hop, т.е. следующая точка маршрута (как правило gateway, gw)
+
+`dev IF_NAME` - device, т.е. сетевой интерфейс на который нужно направить
+
+`src IP_ADDR` - с каким адресом источника должны выходить данные
+
+`metric NUM` - значение метрики, чем больше - тем менее приоритетный маршрут (по-умолчанию: 0)
+
+`proto PROTOCOL` - идентификатор протокола маршрутизации этого маршрута может быть числом или строкой, есть фиксированные значения, например `kernel` -  маршрут был установлен ядром во время автоконфигурации.
+
+Смотреть: `man ip-route`.
+
+Задать маршрут можно так:
+
+```bash
+ip r add ADDR/MASK via GW_ADDR dev IFACE metric NUMBER
+```
+
+Удалить соовтетственно:
+
+```bash
+ip r del ADDR/MASK via GW_ADDR dev IFACE metric NUMBER
+```
 
 ### Основы: TCP/IP стек
+
+Реализация в коде ядра Linux [тут](https://github.com/torvalds/linux/tree/master/net).
+
+[The Linux TCP/IP Stack—Networking for Embedded Systems](https://doc.lagout.org/network/The%20Linux%20TCP%20IP%20Stack%20-%20Networking%20for%20Embedded%20Systems.pdf)
 
 > TODO: tcp/ip в linux, костыли для других стеков
 
 ### Порты
 
-> TODO: netstat, ss
+> TODO: теория что такое порт и зачем?
+
+Смотрим какие порты слушаются:
+
+```bash
+# TCP Legacy/New слушаемые порты
+netstat -nlpt
+ss -nlpt
+
+# UDP Legacy/New слушаемые порты
+netstat -nlpu
+ss -nlpu
+```
+
+```bash
+# Проверить слушается ли порт
+nc -vz HOST PORT
+```
 
 ### TCPDUMP
 
@@ -998,6 +1189,68 @@ proc                                      /proc proc   defaults  0      0
 ### Утилиты работы с сетью
 
 > TODO: curl, nc, telnet, ssh, ftp, vnc ...
+
+### Алгоритм диагностики проблем на сети
+
+1. Убеждаемся, что доступ **необходим**. Может оно вам и не нужно?
+
+2. Проверяем канальный уровень: `ethtool IFACE | grep 'Link detected:'`
+
+   - Если есть проблемы - смотрим физический.
+   - Смотрим `dmesg -T | tail -n500` на предмет "флапов" интерфейса
+
+3. Смотрим локальный firewall **на src** (iptables, nftables, firewalld, ...)
+
+4. Смотрим локальный firewall **на dst** (iptables, nftables, firewalld, ...)
+
+5. Если у хоста **несколько сетевых интерфейсов**, проверьте, что трафик уходит и приходит на **нужный** интерфейс
+   1. Проверьте метрики маршрутов: `ip r` или `route -n`
+   2. Запустите `ping` до хоста
+   3. Проверьте, что не видите трафик вообще - `tcpdump -nni any icmp`
+   4. Обратитесь к [руководству](http://linux-ip.net/html/routing-tables.html) и [статье](https://kb.bluvalt.com/howto/create-multiple-default-route-linux/)
+
+6. Убеждаемся, что смотрим на **правильный протокол** (TCP/UDP/...)
+
+7. Проверяем сетевые настройки на сетевом оборудовании (сетевые дырки)
+
+8. Если протокол **UDP** - смотрим есть ли ответные дырки на сети (нужны в обе стороны)
+
+9. Проверяем, есть ли **NAT** - куда отправляются пакеты, как обратно идут
+
+10. **[ВНИМАНИЕ]: Крайне советую!** Пытаемся **ping-овать с меткой**:
+
+    - Так мы точно определим свои пакеты, даже если они приходят как-то не так
+
+    - **на src**: `ping -p fdfdfdfd $DST`
+    - **на dst**: `tcpdump -iany -nn icmp[31:4]='0xfdfdfdfd'`
+
+11. Смотрим вывод **на dst**:
+
+    1. **Список listen-портов**:
+       `netstat -tulpn | grep $PORT` **или** `ss -tulpn | grep $PORT` **или** ` lsof -i -P -n | grep LISTEN | grep :$PORT`
+    2. **Начинаем ловить трафик**, например так:
+       `tcpdump -nni any port $PORT`
+
+12. Смотрим вывод **на src**:
+
+    1. **ICMP-traceroute:**`traceroute -I $DST`
+
+    2. **TCP/UDP-traceroute:** `traceroute -T -p $PORT $DST`
+       или для **UDP** `traceroute -U -p $PORT $DST`
+       или для **PROTO** или **с MacOS**: `traceroute -P $PROTO -p $PORT $DST`
+
+    3. **Соединение с хостом:**
+
+       - **если TCP**: `nc -vz $DST $PORT`
+         или `telnet $DST $PORT`
+         или `nmap -p $PORT $DST`
+
+       - **если UDP**: `nc -vzu $DST $PORT`
+         или *`nmap -sU -p U:$PORT $DST`*
+
+13. Сверяем сетевые настройки в `sysctl`, особенно: `ip_forward, rp_filter, arp_filter, arp_ignore, arp_announce, proxy_arp, ip_nonlocal_bind, fib_multipath_hash_policy` 
+
+14. Смотрим прочие логи системы, звонок другу, уберите неверный ответ, приносим жертву Ктулху...
 
 
 
@@ -1023,9 +1276,36 @@ proc                                      /proc proc   defaults  0      0
 
 ### Firewall
 
-> TODO: iptables, nftables
+Вводная статья про iptables [тут](https://losst.ru/nastrojka-iptables-dlya-chajnikov). Очень подробное на русском - [тут](https://www.opennet.ru/docs/RUS/iptables/). О том, как работает - [тут](https://www.k-max.name/linux/netfilter-iptables-v-linux/).
 
+[Переход с iptables на nftables](https://habr.com/ru/company/ruvds/blog/580648/).
 
+Алгоритм обработки пакетов IPTables:
+
+![iptables](./img/58-iptables.jpg)
+
+#### Цепочки netfilter: 
+
+- **PREROUTING** — для изначальной обработки **входящих** пакетов
+- **INPUT** — для входящих пакетов, адресованных непосредственно **локальному компьютеру**
+- **FORWARD** — для **проходящих** (маршрутизируемых) пакетов
+- **OUTPUT** — для пакетов, **создаваемых** локальным компьютером (исходящих)
+- **POSTROUTING**— для окончательной обработки **исходящих** пакетов
+- Также можно создавать и уничтожать собственные цепочки при помощи утилиты iptables.
+
+#### Цепочки организованны в 4 **таблицы**:
+
+- **raw** — пакет проходит данную таблицу до передачи [системе определения состояний](https://www.k-max.name/linux/netfilter-iptables-v-linux/#conn). Используется редко, например для маркировки пакетов, которые НЕ должны  обрабатываться системой определения состояний. Для этого в правиле  указывается действие *NOTRACK*. Содержитcя в цепочках *PREROUTING* и *OUTPUT*.
+
+- **mangle** — содержит правила модификации (обычно полей заголовка) IP‐пакетов. Среди прочего, поддерживает действия *TTL*, *TOS*, и *MARK* (для изменения полей TTL и TOS, и для изменения маркеров пакета). Редко  необходима и может быть опасна. Содержится во всех пяти стандартных  цепочках.
+
+- **nat** — предназначена для подмены адреса отправителя  или получателя. Данную таблицу проходят только первый пакет из потока,  трансляция адресов или маскировка (подмена адреса отправителя или  получателя) применяются ко всем последующим пакетам в потоке **автоматически**. Поддерживает действия *DNAT*, *SNAT*, *MASQUERADE*, *REDIRECT*. Содержится в цепочках *PREROUTING*, *OUTPUT*, и *POSTROUTING*.
+
+- **filter** — **основная таблица**, используется по умолчанию если название таблицы не указано. Используется для фильтрации пакетов. Содержится в цепочках *INPUT*, *FORWARD*, и *OUTPUT*.
+
+[Шпаргалка по правилам iptables](https://www.digitalocean.com/community/tutorials/iptables-essentials-common-firewall-rules-and-commands)
+
+> TODO: add new nftables syntax
 
 
 
